@@ -1,0 +1,76 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+    <id>hermiq_exec</id>
+    <name>hermiq-exec</name>
+    <summary>Hardened, egress-jailed execution worker for Hermiq LLM/agent jobs</summary>
+    <description><![CDATA[hermiq-exec — hardened execution worker for Hermiq
+
+A headless ExApp worker that runs Hermiq's heavy/jailed LLM and agent work
+(document analysis, Claude CLI invocations) inside a network-isolated
+container. It has no user-facing UI: it registers two Nextcloud
+TaskProcessing task types (hermiq:doc-analyze, hermiq:agent-exec), polls
+Nextcloud for tasks Hermiq (PHP) enqueues, executes them under an egress
+allowlist (Anthropic API + Ollama host only), and reports results back.
+
+See SPECTR-NEXTCLOUD-PLAN.md §6.5 (hydra ADR-050) for the design and the
+honest isolation-delta note vs. Specter's per-batch container model.
+
+This is a SCAFFOLD: the worker loop, TaskProcessing registration, and
+Dockerfile are a working skeleton; the egress jail and app registration have
+not been exercised against a live Nextcloud + AppAPI instance yet.
+    ]]></description>
+    <version>0.1.0</version>
+    <licence>eupl</licence>
+    <author mail="info@conduction.nl" homepage="https://www.conduction.nl/">Conduction</author>
+    <category>tools</category>
+    <category>integration</category>
+    <website>https://codeberg.org/Conduction/hermiq-exec</website>
+    <bugs>https://codeberg.org/Conduction/hermiq/issues</bugs>
+    <repository>https://codeberg.org/Conduction/hermiq-exec</repository>
+
+    <dependencies>
+        <nextcloud min-version="32" max-version="34"/>
+    </dependencies>
+
+    <external-app>
+        <docker-install>
+            <registry>ghcr.io</registry>
+            <image>conductionnl/hermiq-exec</image>
+            <image-tag>latest</image-tag>
+        </docker-install>
+
+        <!--
+          No <routes> block: this ExApp has no browser-facing surface. The
+          AppAPI lifecycle endpoints (/heartbeat, /init, /enabled) are called
+          directly by AppAPI, not proxied through <routes> — those exist for
+          user-initiated requests (e.g. n8n-nextcloud's catch-all UI proxy).
+          OPEN ITEM (unverified): confirm info.xsd does not require a
+          <routes> element even when it is empty, against a live NC 33/34 +
+          AppAPI instance before first real registration attempt.
+        -->
+
+        <environment-variables>
+            <variable>
+                <name>HERMIQ_EXEC_MAX_JOBS</name>
+                <display-name>Jobs before self-recycle</display-name>
+                <description>Worker exits (for Docker restart) after processing this many tasks, bounding state accumulation from the single long-running container. Default: 200.</description>
+            </variable>
+            <variable>
+                <name>HERMIQ_EXEC_POLL_INTERVAL</name>
+                <display-name>Poll interval (seconds)</display-name>
+                <description>Delay between next_task_batch polls when no task is available. Default: 5.</description>
+            </variable>
+            <variable>
+                <name>HERMIQ_EXEC_POLL_BATCH</name>
+                <display-name>Poll batch size</display-name>
+                <description>Number of tasks requested per next_task_batch call. Default: 1.</description>
+            </variable>
+            <variable>
+                <name>COMPUTE_DEVICE</name>
+                <display-name>Compute device</display-name>
+                <description>CUDA or ROCM, for local-model passthrough (Ollama/Qwen). Leave empty for CPU/API-only.</description>
+            </variable>
+        </environment-variables>
+    </external-app>
+</info>
