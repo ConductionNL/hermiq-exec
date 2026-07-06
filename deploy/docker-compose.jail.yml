@@ -1,0 +1,112 @@
+# hermiq-exec egress jail — reproduces Specter's network-isolation posture
+# (concurrentie-analyse/docker-compose.intelligence.yml's `analysis` +
+# `analysis-firewall` pair) for the ExApp deploy model.
+#
+# DELIBERATE IMPROVEMENT over the Specter original: Specter's firewall
+# sidecar sets its OWN iptables OUTPUT rules, but a sidecar on the same
+# Docker *bridge* network has its OWN network namespace — its OUTPUT chain
+# never governs a sibling container's traffic. Effective isolation requires
+# the worker to share the gateway's network *namespace*, not just its
+# *network*. This compose does that via `network_mode: "service:egress-gate"`
+# below, so egress-gate's iptables rules genuinely apply to hermiq-exec.
+#
+# Topology:
+#   hermiq-exec  --(shares netns of)-->  egress-gate  --attached to-->  nc-internal (internal: true — NC/AppAPI/HaRP control channel, no internet route)
+#                                                      --attached to-->  egress-restricted (normal bridge; egress-gate's iptables OUTPUT DROP-by-default + allowlist is the only thing permitted to leave)
+#
+# AppAPI has no per-app egress knob (verified against the docker-install /
+# HaRP deploy model, plan §6.5) — this network topology + iptables ruleset
+# IS the egress control, not anything in the app or its Dockerfile.
+#
+# UNVERIFIED (no live NC/AppAPI instance in this scaffold's environment):
+#   - the exact value/lifecycle of `nc-internal` as provisioned by
+#     `occ app_api:daemon:register --net ...` (see deploy/README.md) — this
+#     file assumes that network already exists and is passed in by name.
+#   - HaRP's actual control-channel requirements (FRP tunnel vs. plain HTTP
+#     callback) — treated here as "hermiq-exec must be reachable from NC on
+#     nc-internal", which is the invariant that matters for this jail design
+#     regardless of HaRP's internals.
+
+services:
+  hermiq-exec:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ghcr.io/conductionnl/hermiq-exec:latest
+    container_name: hermiq-exec
+    restart: unless-stopped
+    # No `networks:` here — network_mode below attaches this container to
+    # egress-gate's namespace (interfaces, routes, AND iptables rules).
+    network_mode: "service:egress-gate"
+    depends_on:
+      - egress-gate
+    environment:
+      APP_ID: hermiq_exec
+      APP_SECRET: ${HERMIQ_EXEC_APP_SECRET:?set by occ app_api:app:register at install time}
+      NEXTCLOUD_URL: ${NEXTCLOUD_URL:?e.g. https://nextcloud.example.org}
+      APP_PERSISTENT_STORAGE: /data
+      # Classic (non-HaRP) mode listens on APP_HOST:APP_PORT; HaRP mode
+      # (HP_SHARED_KEY set) listens on a unix socket instead — see
+      # nc_py_api's run_app(). Only one of the two paths is exercised at
+      # runtime depending on which the daemon registration used.
+      APP_HOST: 0.0.0.0
+      APP_PORT: "23000"
+      # HP_SHARED_KEY: ${HP_SHARED_KEY}          # set by AppAPI when using HaRP
+      # HP_EXAPP_SOCK: /tmp/exapp.sock            # set by AppAPI when using HaRP
+      HERMIQ_EXEC_MAX_JOBS: ${HERMIQ_EXEC_MAX_JOBS:-200}
+      HERMIQ_EXEC_POLL_INTERVAL: ${HERMIQ_EXEC_POLL_INTERVAL:-5}
+      COMPUTE_DEVICE: ${COMPUTE_DEVICE:-}
+    volumes:
+      - hermiq-exec-data:/data
+      # Claude CLI credentials, read-only — same mount pattern as
+      # concurrentie-analyse/docker-compose.intelligence.yml. Never bake
+      # these into the image; never commit them to this repo.
+      - ${CLAUDE_CREDENTIALS_PATH:-~/.claude/.credentials.json}:/home/hermiq/.claude/.credentials.json:ro
+
+  # Network-namespace host + firewall. Alpine + iptables, matching
+  # concurrentie-analyse/docker-compose.intelligence.yml's `analysis-firewall`
+  # sidecar almost verbatim — only the attached networks + NAT/forwarding
+  # setup differ (this one actually sits between two networks instead of
+  # bolting onto one bridge network from the outside).
+  egress-gate:
+    image: alpine:latest
+    container_name: hermiq-exec-egress-gate
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - nc-internal
+      - egress-restricted
+    command: >
+      sh -c "
+        apk add --no-cache iptables &&
+        sysctl -w net.ipv4.ip_forward=1 &&
+        iptables -P OUTPUT DROP &&
+        iptables -A OUTPUT -o lo -j ACCEPT &&
+        iptables -A OUTPUT -p udp --dport 53 -j ACCEPT &&
+        iptables -A OUTPUT -p tcp --dport 443 -d api.anthropic.com -j ACCEPT &&
+        iptables -A OUTPUT -p tcp --dport ${OLLAMA_PORT:-11434} -d ${OLLAMA_HOST:-host.docker.internal} -j ACCEPT &&
+        iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT &&
+        echo 'egress-gate ready: OUTPUT DROP by default; ALLOW dns + api.anthropic.com:443 + ollama + established' &&
+        sleep infinity
+      "
+
+networks:
+  # Pre-created by the admin (see deploy/README.md) and passed to
+  # `occ app_api:daemon:register --net <name>` so AppAPI attaches every
+  # ExApp container it deploys to it. `internal: true` here is enforced by
+  # Docker at the network layer — containers on it get no default route to
+  # the internet, only to each other (including NC) — regardless of
+  # anything this compose file does.
+  nc-internal:
+    external: true
+    name: ${HERMIQ_EXEC_NC_NETWORK:?the pre-created --net network from occ app_api:daemon:register, see deploy/README.md}
+
+  # The only network with a real route out. Not `internal`, but egress-gate
+  # (whose namespace hermiq-exec shares) is the sole thing attached to it
+  # from this compose, and its iptables rules gate everything that crosses.
+  egress-restricted:
+    driver: bridge
+
+volumes:
+  hermiq-exec-data:
