@@ -82,7 +82,7 @@ USE_BATCH_POLL = os.environ.get("HERMIQ_EXEC_USE_BATCH_POLL", "false").lower() =
 # Handler dispatch table: task type id -> (kind, callable).
 # "sync" handlers return an output dict directly (raise ValueError on bad
 # input); "tuple" handlers return (output, error_message) themselves — used
-# by the deliberately-stubbed hermiq:agent-exec.
+# by hermiq:agent-exec, which reports its own structured failures.
 _SYNC_HANDLERS = {TASK_TYPE_DOC_ANALYZE: run_doc_analyze}
 _TUPLE_HANDLERS = {TASK_TYPE_AGENT_EXEC: run_agent_exec}
 
@@ -129,30 +129,99 @@ def _doc_analyze_task_type() -> TaskType:
 
 
 def _agent_exec_task_type() -> TaskType:
+    """Task type for hermiq:agent-exec, per the ratified wire contract in
+    openspec/changes/agent-exec-handler/specs/agent-exec-handler/spec.md
+    (identical on Hermiq's enqueuing side —
+    hermiq/openspec/changes/agent-exec-tasktype). Handler:
+    ex_app/lib/analyze.py::run_agent_exec.
+    """
     return TaskType(
         id=TASK_TYPE_AGENT_EXEC,
         name="Hermiq: Agent Execution",
         description=(
-            "Run an already-assembled agent prompt/tool-loop under the "
-            "hermiq-exec egress jail. STUB: not implemented yet — see "
-            "ex_app/lib/analyze.py::run_agent_exec."
+            "Run an already-assembled agent prompt/tool-loop via the Claude CLI under the hermiq-exec egress jail."
         ),
         input_shape=[
             ShapeDescriptor(
+                name="correlation_id",
+                description="Run/approval/audit correlation id — echoed verbatim into audit_json.",
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
                 name="agent_id",
-                description="Hermiq Agent object UUID (acting identity for the audit trail).",
+                description="Hermiq Agent object UUID — attribution only, echoed into audit_json.",
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
+                name="acting_user",
+                description="NC user id the run is attributed to — attribution only, never authenticated as.",
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
+                name="model",
+                description="Claude model id for the CLI.",
+                shape_type=ShapeType.ENUM,
+            ),
+            ShapeDescriptor(
+                name="system_prompt",
+                description="Assembled system prompt / agent persona (Hermiq ContextAssembler output).",
                 shape_type=ShapeType.TEXT,
             ),
             ShapeDescriptor(
                 name="prompt",
-                description="Assembled prompt/context (Hermiq ContextAssembler output, plan §6.4).",
+                description="Assembled user instructions + inlined context (Hermiq ContextAssembler output).",
                 shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
+                name="skill_set",
+                description='JSON array of inlined skills: [{"slug","instructions"}].',
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
+                name="tool_allowlist",
+                description='JSON array of "{appId}.{toolName}" ids; empty/absent = no tools enabled.',
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
+                name="context_files",
+                description='JSON object {"filename": "content"} of read-only reference material.',
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
+                name="max_turns",
+                description="Upper bound on the CLI tool loop (clamped to the worker's ceiling).",
+                shape_type=ShapeType.NUMBER,
+            ),
+            ShapeDescriptor(
+                name="timeout_seconds",
+                description="Hard wall-clock execution budget (clamped to the worker's ceiling).",
+                shape_type=ShapeType.NUMBER,
             ),
         ],
         output_shape=[
             ShapeDescriptor(
+                name="status",
+                description='One of "success" | "failure" | "timeout" | "refused".',
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
                 name="response_text",
                 description="Agent's final response text.",
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
+                name="artifacts",
+                description='JSON array of produced artifacts: [{"name","content"}].',
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
+                name="audit_json",
+                description="JSON object capturing model/turns/tool_calls/exit_code/duration_ms for the audit trail.",
+                shape_type=ShapeType.TEXT,
+            ),
+            ShapeDescriptor(
+                name="error_detail",
+                description="Human-readable, redacted detail when status != success.",
                 shape_type=ShapeType.TEXT,
             ),
         ],
@@ -182,6 +251,14 @@ def _agent_exec_provider() -> TaskProcessingProvider:
         name="Hermiq Agent Execution (hermiq-exec)",
         task_type=TASK_TYPE_AGENT_EXEC,
         expected_runtime=300,
+        input_shape_enum_values={
+            "model": [
+                ShapeEnumValue(name="Sonnet", value="sonnet"),
+                ShapeEnumValue(name="Opus", value="opus"),
+                ShapeEnumValue(name="Haiku", value="haiku"),
+                ShapeEnumValue(name="Fable", value="fable"),
+            ],
+        },
     )
 
 
