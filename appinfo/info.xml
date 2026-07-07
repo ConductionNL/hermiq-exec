@@ -21,7 +21,7 @@ Dockerfile are a working skeleton; the egress jail and app registration have
 not been exercised against a live Nextcloud + AppAPI instance yet.
     ]]></description>
     <version>0.1.0</version>
-    <licence>eupl</licence>
+    <licence>EUPL-1.2</licence>
     <author mail="info@conduction.nl" homepage="https://www.conduction.nl/">Conduction</author>
     <category>tools</category>
     <category>integration</category>
