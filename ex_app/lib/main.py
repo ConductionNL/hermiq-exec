@@ -35,6 +35,7 @@ import typing
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from analyze import run_agent_exec, run_doc_analyze
 from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 from nc_py_api import NextcloudApp
@@ -52,8 +53,6 @@ from nc_py_api.ex_app.providers.task_processing import (
     TaskProcessingProvider,
     TaskType,
 )
-
-from analyze import run_agent_exec, run_doc_analyze
 
 # ── Logging ─────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -216,9 +215,12 @@ async def _process_task(nc: NextcloudApp, task: dict[str, typing.Any]) -> None:
     global _jobs_processed
 
     task_id = task.get("id")
+    if task_id is None:
+        LOGGER.error("Task missing 'id' field — cannot process or report a result: %s", task)
+        return
     task_type = task.get("type")
     task_input = task.get("input") or {}
-    workspace = _workspace_for(task_id)
+    workspace = _workspace_for(int(task_id))
 
     # Pre-job wipe: guarantee no leftovers from a prior job in this same
     # persistent worker process (the isolation delta vs Specter's per-batch
@@ -236,7 +238,7 @@ async def _process_task(nc: NextcloudApp, task: dict[str, typing.Any]) -> None:
             error_message = f"Unknown task type '{task_type}' (no handler registered in main.py)"
     except ValueError as exc:
         error_message = str(exc)
-    except Exception as exc:  # noqa: BLE001 — must not crash the poll loop
+    except Exception as exc:
         LOGGER.exception("Unhandled error processing task %s (%s)", task_id, task_type)
         error_message = f"Unhandled worker error: {exc}"
     finally:
@@ -246,10 +248,16 @@ async def _process_task(nc: NextcloudApp, task: dict[str, typing.Any]) -> None:
         _jobs_processed += 1
 
     result = await asyncio.to_thread(
-        nc.providers.task_processing.report_result, task_id, output=output, error_message=error_message
+        nc.providers.task_processing.report_result,
+        task_id,
+        output=output,
+        error_message=error_message,
     )
     if not result:
-        LOGGER.warning("report_result for task %s returned no confirmation (network/AppAPI issue?)", task_id)
+        LOGGER.warning(
+            "report_result for task %s returned no confirmation (network/AppAPI issue?)",
+            task_id,
+        )
 
 
 async def _poll_once(nc: NextcloudApp) -> list[dict[str, typing.Any]]:
@@ -260,7 +268,10 @@ async def _poll_once(nc: NextcloudApp) -> list[dict[str, typing.Any]]:
 
     if USE_BATCH_POLL:
         batch = await asyncio.to_thread(
-            nc.providers.task_processing.next_task_batch, provider_ids, task_types, POLL_BATCH_SIZE
+            nc.providers.task_processing.next_task_batch,
+            provider_ids,
+            task_types,
+            POLL_BATCH_SIZE,
         )
         return [entry["task"] for entry in batch.get("tasks", []) if "task" in entry]
 
@@ -274,7 +285,10 @@ async def _poll_loop() -> None:
     nc = NextcloudApp()  # standalone instance: env-driven (APP_ID/APP_SECRET/NEXTCLOUD_URL), no inbound request
     LOGGER.info(
         "Poll worker starting (interval=%ss, batch=%s, use_batch_poll=%s, recycle_after=%s jobs)",
-        POLL_INTERVAL_SECONDS, POLL_BATCH_SIZE, USE_BATCH_POLL, MAX_JOBS_BEFORE_RECYCLE,
+        POLL_INTERVAL_SECONDS,
+        POLL_BATCH_SIZE,
+        USE_BATCH_POLL,
+        MAX_JOBS_BEFORE_RECYCLE,
     )
     while _poll_should_run:
         try:
@@ -356,7 +370,7 @@ async def enabled_callback(enabled: bool, nc: typing.Annotated[NextcloudApp, Dep
         LOGGER.info("Enabling hermiq-exec")
         try:
             await asyncio.to_thread(register_providers, nc)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             LOGGER.exception("Provider registration failed")
             return JSONResponse(content={"error": str(exc)})
         start_poll_worker()

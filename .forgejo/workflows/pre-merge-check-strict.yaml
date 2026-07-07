@@ -1,0 +1,45 @@
+# Pre-merge quality gate — enforced ruff + mypy on every PR, per CLAUDE.md's
+# Python-ExApp convention ("Python ExApps use `make check-strict` = ruff +
+# mypy"). Intended as a required status check on protected branches.
+#
+# Runner/container: `runs-on: docker` (Codeberg's shared Forgejo runner label
+# — the same label hermiq's PHP workflow uses) + the official python:3.11-slim
+# image, matching this app's Dockerfile base (python:3.11-slim).
+
+name: pre-merge-check-strict
+
+on:
+  pull_request:
+    branches:
+      - development
+      - main
+      - beta
+  push:
+    branches:
+      - development
+
+jobs:
+  quality-gates:
+    runs-on: docker
+    container:
+      image: python:3.11-slim
+    timeout-minutes: 15
+    steps:
+      - name: Install base tooling
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends make git ca-certificates
+
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r requirements.txt
+
+      - name: Run check-strict (ruff lint + format + mypy)
+        run: make check-strict
