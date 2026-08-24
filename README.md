@@ -144,7 +144,6 @@ EUPL-1.2, matching Hermiq and the rest of the Conduction fleet. See
 
 ## Repository status
 
-This is a **new, standalone repository**, not yet pushed anywhere — the
-Codeberg repo (`Conduction/hermiq-exec`) does not exist yet and needs to be
-created before this can be pushed. Everything above is committed locally
-only.
+This is a **standalone repository**, hosted at
+[`ConductionNL/hermiq-exec`](https://github.com/ConductionNL/hermiq-exec) on
+GitHub.

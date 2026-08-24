@@ -25,9 +25,9 @@ not been exercised against a live Nextcloud + AppAPI instance yet.
     <author mail="info@conduction.nl" homepage="https://www.conduction.nl/">Conduction</author>
     <category>tools</category>
     <category>integration</category>
-    <website>https://codeberg.org/Conduction/hermiq-exec</website>
-    <bugs>https://codeberg.org/Conduction/hermiq/issues</bugs>
-    <repository>https://codeberg.org/Conduction/hermiq-exec</repository>
+    <website>https://github.com/ConductionNL/hermiq-exec</website>
+    <bugs>https://github.com/ConductionNL/hermiq/issues</bugs>
+    <repository>https://github.com/ConductionNL/hermiq-exec</repository>
 
     <dependencies>
         <nextcloud min-version="32" max-version="34"/>
