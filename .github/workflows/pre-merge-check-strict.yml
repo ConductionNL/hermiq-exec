@@ -1,0 +1,71 @@
+# Pre-merge quality gate — enforced ruff + mypy + pytest on every PR, per
+# CLAUDE.md's Python-ExApp convention ("Python ExApps use `make check-strict`").
+# Intended as a required status check on protected branches.
+#
+# GitHub Actions port of .forgejo/workflows/pre-merge-check-strict.yaml, which
+# was this repo's ONLY CI definition. Behaviour is preserved 1:1:
+#   - same trigger set (PRs into development/main/beta, pushes to development)
+#   - same single command: `make check-strict`
+#       = ruff check  +  ruff format --check  +  mypy  +  pytest
+#   - same Python 3.11 (matches Dockerfile's python:3.11-slim and
+#     pyproject.toml's requires-python / target-version = py311)
+#
+# Differences from the Forgejo original, all mechanical:
+#   - `runs-on: docker` + `container: python:3.11-slim` becomes the hosted
+#     ubuntu-latest runner plus actions/setup-python. The container was only
+#     ever there to supply Python 3.11 and it forced an apt-get step to install
+#     `make`/`git`/`ca-certificates`; ubuntu-latest ships all three, so that
+#     step is gone rather than translated.
+#   - `https://code.forgejo.org/actions/checkout@v4` -> `actions/checkout`,
+#     pinned on commit SHA (supply-chain policy).
+#
+# No secrets are required. Nothing here pushes, publishes or deploys.
+
+name: pre-merge-check-strict
+
+on:
+  pull_request:
+    branches:
+      - development
+      - main
+      # `beta` does not exist in this repo today; kept from the Forgejo
+      # original so the gate is already in place if the branch is created.
+      - beta
+  push:
+    branches:
+      - development
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pre-merge-check-strict-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -r requirements.txt
+
+      - name: Run check-strict (ruff lint + format + mypy + pytest)
+        run: make check-strict
