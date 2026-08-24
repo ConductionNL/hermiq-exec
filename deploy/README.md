@@ -65,7 +65,7 @@ the `--net` flag is the part that matters for this design either way.)
 docker exec -u www-data nextcloud php occ app_api:app:register \
     hermiq_exec \
     hermiq-exec-daemon \
-    --info-xml https://codeberg.org/Conduction/hermiq-exec/raw/branch/main/appinfo/info.xml \
+    --info-xml https://github.com/ConductionNL/hermiq-exec/raw/main/appinfo/info.xml \
     --force-scopes
 ```
 
